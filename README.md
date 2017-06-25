@@ -1,3 +1,4 @@
 # PracticalMachineLearning
 course project
-What you should submit
+Important:
+Please read the pdf version, HTML version is not the rendered version.
