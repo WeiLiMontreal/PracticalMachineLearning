@@ -1,0 +1,237 @@
+---
+title: "Project for machine learning with the Weight Lifting Exercise Dataset"
+author: "Wei Li"
+date: "6/24/2017"
+output: html_document
+---
+
+```{r download_data, warning=FALSE,message=FALSE, echo=FALSE}
+
+# knitr::opts_chunk$set(echo = TRUE)
+path_traindata = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+path_testdata = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+if(!exists('data_pml_train')){
+        if(!file.exists("pml-training.csv")){
+                temp <- tempfile()
+                download.file(path_traindata,temp)
+                data_pml_train <- read.csv(gzfile(temp,"pml-training.csv" ), na.strings=c("NA","#DIV/0!",""))
+                unlink(temp)
+                temp <- tempfile()
+                download.file(path_testdata,temp)
+                data_pml_test<- read.csv(gzfile(temp,"pml-testing.csv" ), na.strings=c("NA","#DIV/0!",""))
+                unlink(temp)
+                
+        }
+        else{
+                data_pml_train <- read.csv("pml-training.csv" , na.strings=c("NA","#DIV/0!",""))
+                data_pml_test <- read.csv("pml-testing.csv" , na.strings=c("NA","#DIV/0!",""))
+        }
+}
+
+```
+
+```{r library,warning=FALSE,message=FALSE, echo=FALSE}
+require(ggplot2)
+require(randomForest)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(randomForest)
+```
+## Summary
+
+The aim of this project is to train a machine learning model with the training set in order to predict which category the execution quality of each of 20 participant in the test data belongs to. The training and the test data come from the source http://groupware.les.inf.puc-rio.br/har. The project first cleaned and selected the variables, and then trained models with cross validation strategy and examined the out-of-sample error rate. Finally Chose the model with a better accuracy to predict 20 different test cases.
+
+
+## Cleaned and selected variables for the training process
+
+The original training and the testing  data sets from the source have 19622 and 20 observations respectively for 160 variables. 
+
+```{r data_info, warning=FALSE,message=FALSE, echo=FALSE}
+
+str(data_pml_train, list.len = 13)
+str(data_pml_test, list.len = 2)
+```
+
+As there was no observation for many variables, removing them would simplify the training procedure.
+Also the names of participant, time and window related variables had been removed too. The total final prediction variable number was 53 with 19622 and 20 observations for training and validation sets, as listed as bellow:
+
+```{r cleaning, warning=FALSE,message=FALSE, echo=FALSE}
+set.seed(12345) 
+
+propNAs <- colMeans(is.na(data_pml_train))
+
+idxTake <-  which(propNAs==0)
+data_pml_train=data_pml_train[,idxTake]
+data_pml_test = data_pml_test[, idxTake]
+
+idxRemove <- grep("^X$|user_name|timestamp|window", names(data_pml_train)) 
+data_pml_train <- data_pml_train[-idxRemove]
+data_pml_test = data_pml_test[-idxRemove]
+
+str(data_pml_train, list.len = 2)
+str(data_pml_test, list.len = 2)
+names(data_pml_train)
+```
+
+## Cross validation strategy
+
+The goal to set up a model from the training dataset with machine learning here is to predict on the new data where the outcome is unknown, so the models should not over-fit the training data while generalizing well at the same time. The strategy for dealing with this issue in machine learning is cross validation. Basically there are three common ways to do cross validation: (a) simply split the data into the training and validation set; (b) k-fold cross validation; (c) leave-p-out or leave-one-out cross validation. The third way is usually called exhaustive cross-validation, so it wouldn't be addressed in this project.
+
+#### Divide the dataset into training and validation sets
+
+The cleaned training data was divided into the final training and validation data sets with 3/4 and 1/4 fractions respectively, as listed as below:
+
+```{r devide_data, warning=FALSE,message=FALSE,echo=TRUE}
+
+inTrain = createDataPartition(data_pml_train$classe, p = 3/4)[[1]]
+training = data_pml_train[ inTrain,]
+validation = data_pml_train[-inTrain,]
+
+str(training, list.len = 2)
+str(validation, list.len = 2)
+
+```
+
+#### Train models
+
+1: The "train" function in "caret" can do cross-validation. I tried folder number be 10 with trControl argument and "rf" (random forest model).
+
+As the training time with k-fold with "train" function was very time consuming and needed hours, which is not convenient with Knit, so I just listed them as bellows:
+
+```{r train_trControl,  echo=TRUE}
+
+# set.seed(12345)
+# modelfit_rf10k= train(classe ~. , training, method = "rf",prox = TRUE,
+#                       trControl = trainControl(method = "cv", number =10, verboseIter = TRUE))
+
+# > modelfit_rf10k
+# Random Forest 
+# 
+# 14718 samples
+# 52 predictor
+# 5 classes: 'A', 'B', 'C', 'D', 'E' 
+# 
+# No pre-processing
+# Resampling: Cross-Validated (10 fold) 
+# Summary of sample sizes: 13247, 13246, 13245, 13247, 13246, 13248, ... 
+# Resampling results across tuning parameters:
+#         
+# mtry  Accuracy   Kappa    
+# 2     0.9929344  0.9910613
+# 27    0.9933432  0.9915794
+# 52    0.9912366  0.9889140
+# 
+# Accuracy was used to select the optimal model using  the largest value.
+# The final value used for the model was mtry = 27.
+
+```
+
+2: Use randomForest function with randomForest package
+
+Here the model was trained on the split training set without do further k-fold cross-validation.
+
+```{r randomForest,  echo=TRUE}
+set.seed(12345)
+modelfit_rf <- randomForest::randomForest(classe ~ ., data = training)
+
+```
+
+
+## In-sample error and out-of-sample error
+
+1: Let's first take a look at in-sample error for the models, that is, the error with the training set itself. 
+
+This in-sample error is from modelfit_rf10k:
+
+```{r in-sample-error-rf10k, echo=TRUE}
+# pred1Train10k <- predict(modelfit_rf10k, newdata = training)
+# confusionMatrix(table(pred1Train10k, training$classe))
+
+# Confusion Matrix and Statistics
+# 
+# pred1Train10k    A    B    C    D    E
+# A 4185    0    0    0    0
+# B    0 2848    0    0    0
+# C    0    0 2567    0    0
+# D    0    0    0 2412    0
+# E    0    0    0    0 2706
+# 
+# Overall Statistics
+# 
+# Accuracy : 1          
+# 95% CI : (0.9997, 1)
+# No Information Rate : 0.2843     
+# P-Value [Acc > NIR] : < 2.2e-16  
+# 
+# Kappa : 1          
+# Mcnemar's Test P-Value : NA       
+
+
+```
+
+The following in-sample error comes from modelfit_rf
+
+```{r out_of_sample_error, echo=TRUE}
+
+pred_train_rf <- predict(modelfit_rf, newdata = training)
+confusionMatrix(table(pred_train_rf, training$classe))
+
+plot(modelfit_rf, main = "Error rate of the model (modelfit_rf) ")
+
+```
+
+The above figure shows us the error rate of the model with function randomForest.
+
+
+2: Examine the out-of-sample error with the training models
+
+The out-of-sample error from modelfit_rf10k is:
+
+```{r out_of_sample_error_10k, echo=TRUE}
+
+# pred1Test10k <- predict(modelfit_rf10k, newdata = validation)
+# confusionMatrix(table(pred1Test10k, validation$classe))
+#
+# Confusion Matrix and Statistics
+# 
+# 
+# pred1Test10k    A    B    C    D    E
+# A 1394    6    0    0    0
+# B    1  938    3    0    0
+# C    0    5  848    8    2
+# D    0    0    4  796    5
+# E    0    0    0    0  894
+# 
+# Overall Statistics
+# 
+# Accuracy : 0.9931          
+# 95% CI : (0.9903, 0.9952)
+# No Information Rate : 0.2845          
+# P-Value [Acc > NIR] : < 2.2e-16       
+# 
+# Kappa : 0.9912          
+
+
+```
+
+Here is the out_of_sample error from modelfit_rf
+
+```{r out_of_sample_error_with_validation,  echo=TRUE}
+pred_valid_rf <- predict(modelfit_rf, newdata = validation)
+confusionMatrix(table(pred_valid_rf, validation$classe))
+```
+
+From the above two models, we can see their performances are very similar, the out-of-sample errors are 0.69%=1-0.9931 and 0.51%=1-0.9949 for modelfit_rf10k and modelfit_rf respectively. So both models fitted the training data and generalized well. Because the model (modelfit_rf10k) trained with "train" function using trControl argument and "rf" algorithm was too time consuming for the training process, so the model (modelfit_rf) with randomForest function was selected for the prediction.
+
+## Predict the outcome for the original test dataset
+```{r prdiction, echo=TRUE}
+pred_test_rf <- predict(modelfit_rf, newdata = data_pml_test)
+pred_test_rf
+```
+
+## Conclussion
+
+The outcome of the test data was predicted using modelfit_rf, the error rate for this prediction will be expected around 0.51% based on the out-of-sample error obtained from the validation dataset. 
